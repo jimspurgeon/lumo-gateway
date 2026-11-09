@@ -80,6 +80,45 @@ test("second 401 is returned as-is (single refresh only)", async () => {
   await r.text(); // drain
 });
 
+test("401 with a stale same-token re-read polls for the rotated cookie and recovers", async () => {
+  // Cookie DB lags the browser: first read (startup) and second read (immediate
+  // 401 re-read) both return the OLD token; only the polled third read returns TOKEN2.
+  const f = fakeFetch([res(401), res(200)]);
+  const sleeps = [];
+  const logs = [];
+  let readCount = 0;
+  const readCreds = () => { readCount++; return readCount <= 2 ? cred(TOKEN1) : cred(TOKEN2); };
+  const upstream = createUpstream({
+    fetchFn: f.fn, credsRef: { current: null }, readCreds, firstByteMs: 5000,
+    log: (m) => logs.push(m), sleep: async (ms) => sleeps.push(ms),
+  });
+  const r = await upstream("/chat/completions", "POST", "b", {});
+  assert.equal(r.status, 200);
+  assert.equal(readCount, 3);
+  assert.ok(sleeps.length >= 1, "poll waits before re-reading the cookie DB");
+  assert.equal(logs.filter((l) => l.includes("found new token")).length, 1);
+  assert.equal(f.calls[1].opts.headers.authorization, `Bearer ${TOKEN2}`);
+});
+
+test("401 poll gives up after the bounded window and returns the 401", async () => {
+  const f = fakeFetch([res(401), res(401)]);
+  const sleeps = [];
+  const orig = Date.now;
+  let t = 0;
+  Date.now = () => t; // deterministic clock so the 3-minute cap isn't real time
+  try {
+    const upstream = createUpstream({
+      fetchFn: f.fn, credsRef: { current: null }, readCreds: () => cred(TOKEN1),
+      firstByteMs: 5000, log: () => {},
+      sleep: async (ms) => { t += ms + 1; }, // each poll advances past the deadline
+    });
+    const r = await upstream("/chat/completions", "POST", "b", {});
+    assert.equal(r.status, 401);
+    const text = await r.text();
+    assert.ok(!/token/i.test(text), "401 body must not leak token material");
+  } finally { Date.now = orig; }
+});
+
 test("no credential file means a 401 without any fetch call", async () => {
   const f = fakeFetch([res(200)]);
   const sleeps = [];

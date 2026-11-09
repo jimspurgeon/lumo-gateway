@@ -55,9 +55,22 @@ export function createUpstream({
         return new Response(JSON.stringify({ error: { message: `lumo-proxy: connection error: ${e.message}` } }), { status: 502, headers: { "content-type": "application/json" } });
       }
       if (res.status === 401 && !refreshed) {
+        // Cookie rotation (~daily on Lumo): the Firefox cookie DB can lag minutes behind
+        // the browser's in-memory cookie. Re-read once; if the DB still has the same
+        // (revoked) token, poll briefly for the rotated cookie instead of failing fast —
+        // the browser being signed in means the new AUTH cookie will land on disk.
         refreshed = true; await res.text().catch(() => {});
-        const fresh = readCreds();
-        log(`401 from Lumo; re-read login: ${fresh && fresh.token !== creds?.token ? "new token" : "same/none"}`);
+        let fresh = readCreds();
+        if (fresh && fresh.token === creds?.token) {
+          const deadline = Date.now() + Number(process.env.LUMO_AUTH_REFRESH_WAIT_MS || 180000);
+          for (let i = 1; fresh && fresh.token === creds?.token && Date.now() < deadline; i++) {
+            await sleep(Math.min(5000 * i, 15000));
+            fresh = readCreds();
+          }
+          log(`401 from Lumo; rotated-cookie poll ${fresh && fresh.token !== creds?.token ? "found new token" : "timed out"}`);
+        } else {
+          log(`401 from Lumo; re-read login: ${fresh && fresh.token !== creds?.token ? "new token" : "same/none"}`);
+        }
         credsRef.current = fresh; continue;
       }
       if (res.status === 429 && attempt < 2) {
