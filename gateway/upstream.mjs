@@ -59,17 +59,36 @@ export function createUpstream({
         // the browser's in-memory cookie. Re-read once; if the DB still has the same
         // (revoked) token, poll briefly for the rotated cookie instead of failing fast —
         // the browser being signed in means the new AUTH cookie will land on disk.
+        // On a burst of concurrent 401s, all callers share one poll via credsRef.authPoll
+        // rather than hammering the cookie DB in parallel.
         refreshed = true; await res.text().catch(() => {});
-        let fresh = readCreds();
-        if (fresh && fresh.token === creds?.token) {
-          const deadline = Date.now() + Number(process.env.LUMO_AUTH_REFRESH_WAIT_MS || 180000);
-          for (let i = 1; fresh && fresh.token === creds?.token && Date.now() < deadline; i++) {
-            await sleep(Math.min(5000 * i, 15000));
-            fresh = readCreds();
-          }
-          log(`401 from Lumo; rotated-cookie poll ${fresh && fresh.token !== creds?.token ? "found new token" : "timed out"}`);
+        let fresh;
+        if (credsRef.authPoll) {
+          fresh = await credsRef.authPoll; // piggyback on the in-flight poll
         } else {
-          log(`401 from Lumo; re-read login: ${fresh && fresh.token !== creds?.token ? "new token" : "same/none"}`);
+          fresh = readCreds();
+          if (fresh && fresh.token === creds?.token) {
+            credsRef.authPoll = (async () => {
+              const deadline = Date.now() + Number(process.env.LUMO_AUTH_REFRESH_WAIT_MS || 180000);
+              for (let i = 1; fresh && fresh.token === creds?.token && Date.now() < deadline; i++) {
+                await sleep(Math.min(5000 * i, 15000));
+                fresh = readCreds();
+              }
+              return fresh;
+            })();
+            try { fresh = await credsRef.authPoll; }
+            finally { delete credsRef.authPoll; }
+            log(`401 from Lumo; rotated-cookie poll ${fresh && fresh.token !== creds?.token ? "found new token" : "timed out"}`);
+          } else {
+            log(`401 from Lumo; re-read login: ${fresh && fresh.token !== creds?.token ? "new token" : "same/none"}`);
+          }
+        }
+        if (fresh && fresh.token === creds?.token) {
+          // Poll expired with no rotation visible: Firefox only flushes the refreshed
+          // cookie when the lumo.proton.me tab talks to Lumo — visiting/refreshing the
+          // tab forces it. Tell the user instead of surfacing a bare upstream 401.
+          await res.text().catch(() => {});
+          return new Response(JSON.stringify({ error: { message: "lumo-proxy: Lumo rotated its login and Firefox hasn't flushed the new cookie yet. Reload the lumo.proton.me tab in Firefox and retry." } }), { status: 401, headers: { "content-type": "application/json" } });
         }
         credsRef.current = fresh; continue;
       }

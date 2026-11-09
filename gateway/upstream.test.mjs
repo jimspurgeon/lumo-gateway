@@ -100,6 +100,37 @@ test("401 with a stale same-token re-read polls for the rotated cookie and recov
   assert.equal(f.calls[1].opts.headers.authorization, `Bearer ${TOKEN2}`);
 });
 
+test("concurrent 401 burst shares one credential poll instead of re-reading in parallel", async () => {
+  const f = fakeFetch([res(401), res(401), res(200), res(200)]);
+  const sleeps = [];
+  let readCount = 0;
+  const gate = { resolve: null };
+  const inFlight = new Promise((r) => { gate.resolve = r; });
+  // Reads 1-2 (startup + first 401 re-read) return the stale token; the polled
+  // read blocks until the second request has joined the in-flight poll.
+  const readCreds = () => {
+    readCount++;
+    if (readCount <= 2) return cred(TOKEN1);
+    if (readCount === 3) { queueMicrotask(gate.resolve); return cred(TOKEN2); } // poll result, shared
+    return cred(TOKEN2);
+  };
+  const credsRef = { current: null };
+  const upstream = createUpstream({
+    fetchFn: f.fn, credsRef, readCreds, firstByteMs: 5000,
+    log: () => {}, sleep: async (ms) => sleeps.push(ms),
+  });
+  const p1 = upstream("/chat/completions", "POST", "b", {});
+  // Fire the second request while p1's poll is still awaiting sleep.
+  const p2 = upstream("/other", "GET", null, {});
+  await inFlight;
+  const r1 = await p1, r2 = await p2;
+  assert.equal(r1.status, 200);
+  assert.equal(r2.status, 200);
+  // Request 2 piggybacked on the in-flight poll (found authPoll set), so the total
+  // credential reads stayed at the single-request count: startup + re-read + one poll.
+  assert.equal(readCount, 3);
+});
+
 test("401 poll gives up after the bounded window and returns the 401", async () => {
   const f = fakeFetch([res(401), res(401)]);
   const sleeps = [];
