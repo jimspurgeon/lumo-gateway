@@ -65,9 +65,9 @@ Commands:
 
   omp
       Full install for the omp harness in one command: gateway setup, the
-      official omp installer, wiring (models.yml + credential, key value
-      never printed), and a sync of jimspurgeon/omp-config. Runs
-      install-omp-full.sh from this checkout; safe to re-run.
+      official omp installer, and wiring (models.yml + credential, key
+      value never printed). Runs install-omp-full.sh from this checkout;
+      safe to re-run.
 
   status
       Reports whether LumoGatewayLiteLLM is running (Windows service state

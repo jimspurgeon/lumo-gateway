@@ -412,10 +412,8 @@ installer (<https://omp.sh/install>, printed before running), wires omp to the
 gateway (`~/.omp/agent/models.yml` gains a `litellm` provider at
 `http://127.0.0.1:4000/v1`; the master key goes into omp's credential store via
 `omp auth import` from a chmod-600 temp file — the key value is never printed,
-echoed, or passed in argv), and finally syncs the personal config from the
-private `jimspurgeon/omp-config` repo into `~/.omp/agent` (keeping local files
-that are newer). Every stage is idempotent: re-running prints already-done and
-moves on. The Windows one-liner wrapper is
+echoed, or passed in argv). Every stage is idempotent: re-running prints
+already-done and moves on. The Windows one-liner wrapper is
 [`install-omp-full.ps1`](../install-omp-full.ps1).
 
 ### What `setup` prints
@@ -451,7 +449,7 @@ secret ever lands in the terminal or a scrollback buffer:
 | `uninstall` | Stop/remove the services and files — not implemented yet (exit 2) |
 | `api-key` | Prints the base URL (`http://127.0.0.1:4000`) and the master key **file path** — never the key value |
 | `status` | `LumoGatewayLiteLLM` service state + a `:4000` health check |
-| `omp` | One-command full install for the omp harness (runs `install-omp-full.sh`): gateway setup + official omp installer + wiring (`models.yml` provider, credential import, default role) + sync of `jimspurgeon/omp-config`; safe to re-run |
+| `omp` | One-command full install for the omp harness (runs `install-omp-full.sh`): gateway setup + official omp installer + wiring (`models.yml` provider, credential import, default role); safe to re-run |
 | `help` | Full command reference |
 
 Exit codes: `0` success, `1` bad/missing command, `2` placeholder ("not implemented

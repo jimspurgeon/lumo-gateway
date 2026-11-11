@@ -187,10 +187,10 @@ curl -fsSL https://raw.githubusercontent.com/jimspurgeon/lumo-gateway/master/ins
 ```
 
 Each stage is idempotent and prints its progress: gateway setup, the official omp
-installer, wiring (`models.yml` provider, credential import, default role), and a
-sync from the private `jimspurgeon/omp-config` repo. The master-key value is never
-printed or stored in a config file. Already installed from a clone? The same flow
-runs as `lumo-gateway omp`. Details in [docs/GATEWAY.md](docs/GATEWAY.md).
+installer, and wiring (`models.yml` provider, credential import, default role). The
+master-key value is never printed or stored in a config file. Already installed from a
+clone? The same flow runs as `lumo-gateway omp`. Details in
+[docs/GATEWAY.md](docs/GATEWAY.md).
 
 ## Updating and reverting
 

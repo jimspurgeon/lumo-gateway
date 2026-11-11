@@ -1,5 +1,5 @@
 #!/bin/bash
-# install-omp-full.sh: one command, full stack — lumo gateway + omp + wiring + config sync.
+# install-omp-full.sh: one command, full stack — lumo gateway + omp + wiring.
 #
 # Linux/macOS one-liner:
 #   curl -fsSL https://raw.githubusercontent.com/jimspurgeon/lumo-gateway/master/install-omp-full.sh | bash
@@ -18,10 +18,6 @@
 #                  chmod-600 mktemp file (never argv, never echoed, shredded after).
 #                  config.yml modelRoles.default is set to litellm/lumo-max ONLY when
 #                  unset — an existing choice is never clobbered.
-#   4. Sync:       clones jimspurgeon/omp-config and restores its files into ~/.omp/agent
-#                  (RULES.md, agents/, extensions/, skills/, config.yml), keeping a local
-#                  file whenever it is newer than the repo copy (mtime; every decision is
-#                  printed).
 #
 # Security: the master-key VALUE is never printed, echoed, or passed in argv. Only this
 # repo's install.sh and the official omp installer are ever piped to a shell, and both
@@ -30,23 +26,16 @@
 #
 # Env knobs:
 #   CLAUDE_LUMO_STATE_DIR  gateway state dir (default ~/.claude-lumo)
-#   OMP_CONFIG_TOKEN       GitHub token; the omp-config clone uses
-#                         https://<token>@github.com/jimspurgeon/omp-config.git when
-#                         SSH is unavailable. When neither SSH nor a token works the
-#                         stage self-skips with a clear message instead of failing.
 set -euo pipefail
 
 RAW_BASE="https://raw.githubusercontent.com/jimspurgeon/lumo-gateway/master"
 GATEWAY_BASE_URL="http://127.0.0.1:4000"
 OMP_INSTALL_URL="https://omp.sh/install"
-OMP_CONFIG_REPO="jimspurgeon/omp-config"
 S="${CLAUDE_LUMO_STATE_DIR:-$HOME/.claude-lumo}"
 KEY_PATH="$S/master.key"
 AGENT_DIR="$HOME/.omp/agent"
 MODELS_YML="$AGENT_DIR/models.yml"
 CONFIG_YML="$AGENT_DIR/config.yml"
-OMP_CONFIG_DIR="$HOME/.omp-config"       # persistent clone, so re-runs are incremental
-OMPFULL_SKIP_SYNC="${OMPFULL_SKIP_SYNC:-0}"
 
 section() { echo ""; echo "=== $1 ==="; }
 notice()  { echo "[install-omp-full] $*"; }
@@ -85,7 +74,7 @@ mkdir -p "$AGENT_DIR"
 # =====================================================================================
 # Stage 1 — Gateway
 # =====================================================================================
-section "Stage 1/4: gateway (checkout, LiteLLM venv, master key, lumo-gateway CLI)"
+section "Stage 1/3: gateway (checkout, LiteLLM venv, master key, lumo-gateway CLI)"
 
 GW_CLI=""
 command -v lumo-gateway >/dev/null 2>&1 && GW_CLI="$(command -v lumo-gateway)"
@@ -148,7 +137,7 @@ fi
 # =====================================================================================
 # Stage 2 — omp
 # =====================================================================================
-section "Stage 2/4: install omp (official installer)"
+section "Stage 2/3: install omp (official installer)"
 
 if command -v omp >/dev/null 2>&1; then
   echo "  Already installed: omp $(omp --version 2>/dev/null || echo '(version unknown)'). Skipping."
@@ -180,7 +169,7 @@ fi
 # =====================================================================================
 # Stage 3 — Wire omp to the gateway API
 # =====================================================================================
-section "Stage 3/4: wire omp to the gateway (models.yml + credential + default role)"
+section "Stage 3/3: wire omp to the gateway (models.yml + credential + default role)"
 
 # --- 3a. Provider entry in models.yml (python yaml round-trip, key never written here) ---
 "$PY" - "$MODELS_YML" "$GATEWAY_BASE_URL" <<'PYEOF'
@@ -294,132 +283,6 @@ fi
 
 echo "  Wiring complete: provider $GATEWAY_BASE_URL/v1, credential imported, default role set if it was unset."
 
-# =====================================================================================
-# Stage 4 — Sync config from jimspurgeon/omp-config
-# =====================================================================================
-section "Stage 4/4: sync omp config from $OMP_CONFIG_REPO"
-
-if [ "$OMPFULL_SKIP_SYNC" = "1" ]; then
-  echo "  Skipped (OMPFULL_SKIP_SYNC=1)."
-else
-  CONFIG_CLONE_OK=0
-
-  # Freshen the persistent clone when it exists (it was reachable before, so just pull).
-  if [ -d "$OMP_CONFIG_DIR/.git" ]; then
-    if git -C "$OMP_CONFIG_DIR" pull --ff-only -q >/dev/null 2>&1; then
-      CONFIG_CLONE_OK=1
-    else
-      echo "  Note: could not update the clone at $OMP_CONFIG_DIR (offline?); using the local copy."
-      CONFIG_CLONE_OK=1
-    fi
-  fi
-
-  # Existing-but-not-git: refuse to clobber, self-skip.
-  if [ "$CONFIG_CLONE_OK" = "0" ] && [ -d "$OMP_CONFIG_DIR" ]; then
-    echo "  WARNING: $OMP_CONFIG_DIR exists but is not a git clone; leaving it alone."
-    echo "  Fix it (remove it) and re-run for config sync."
-  fi
-
-  # Clone: try HTTPS+token, then plain HTTPS (public fork case), then SSH.
-  if [ "$CONFIG_CLONE_OK" = "0" ]; then
-    _OMP_CONFIG_TOKEN="${OMP_CONFIG_TOKEN:-}"
-    TOKEN_URL="https://${_OMP_CONFIG_TOKEN}@github.com/${OMP_CONFIG_REPO}.git"
-    if [ -n "$_OMP_CONFIG_TOKEN" ] && git clone -q "$TOKEN_URL" "$OMP_CONFIG_DIR" >/dev/null 2>&1; then
-      CONFIG_CLONE_OK=1
-      echo "  Cloned $OMP_CONFIG_REPO (HTTPS token)."
-    elif git clone -q "https://github.com/${OMP_CONFIG_REPO}.git" "$OMP_CONFIG_DIR" >/dev/null 2>&1; then
-      CONFIG_CLONE_OK=1
-      echo "  Cloned $OMP_CONFIG_REPO (anonymous HTTPS)."
-    elif git clone -q "git@github.com:${OMP_CONFIG_REPO}.git" "$OMP_CONFIG_DIR" >/dev/null 2>&1; then
-      CONFIG_CLONE_OK=1
-      echo "  Cloned $OMP_CONFIG_REPO (SSH)."
-    else
-      rm -rf "$OMP_CONFIG_DIR" 2>/dev/null || true
-    fi
-  fi
-
-  if [ "$CONFIG_CLONE_OK" = "0" ]; then
-    echo "  Self-skipping this stage: could not clone $OMP_CONFIG_REPO."
-    echo "  Access is private. Either:"
-    echo "    - set up an SSH key with github.com, or"
-    echo "    - export OMP_CONFIG_TOKEN=<GitHub PAT with repo access> and re-run."
-    echo "  Everything else is fully installed and wired; only the personal"
-    echo "  config sync (agents/extensions/RULES.md/config.yml) is missing."
-  else
-    echo "  Restoring files into $AGENT_DIR (merge-critical files restored only when absent):"
-    restore_tree() {
-      local src="$1" dst="$2" f rel ds abs
-      # Repo meta files are not agent config; only RULES.md, config.yml, agents/,
-      # extensions/, skills/, agent/ (and future config dirs) are restored.
-      # Merge-critical files (user-editable config) are restored ONLY when absent
-      # locally — same "never clobber an existing choice" rule as stage 3c's
-      # modelRoles handling. Timestamps there meant a repo copy could silently
-      # revert local edits, so they are not consulted at all.
-      # shellcheck disable=SC2044
-      for f in $(cd "$src" && find . -type f ! -path './.git/*' ! -name 'README.md' ! -name 'install.sh' ! -name 'sync.sh' | sort); do
-        rel="${f#./}"
-        ds="$dst/$rel"
-        abs="$src/$rel"
-        mkdir -p "$(dirname "$ds")"
-        if [ ! -e "$ds" ]; then
-          cp -p "$abs" "$ds"
-          echo "    restored from repo: $rel (new file)"
-        elif [ "$rel" = "config.yml" ] || [ "$rel" = "RULES.md" ] || [[ "$rel" == agents/* ]]; then
-          echo "    kept local (merge-critical): $rel"
-        elif cmp -s "$ds" "$abs"; then
-          echo "    identical:          $rel"
-        elif [ "$ds" -nt "$abs" ]; then
-          echo "    kept local (newer): $rel"
-        else
-          cp -p "$abs" "$ds"
-          echo "    restored from repo: $rel"
-        fi
-      done
-    }
-    restore_tree "$OMP_CONFIG_DIR" "$AGENT_DIR"
-    # No post-processing beyond restore: plugins install via `omp plugin install`
-    # on demand; omp loads RULES.md, agents/, extensions/, skills/ directly.
-    echo "  Config sync complete."
-
-    # config.yml is merge-critical at the key level too: restore only keys/
-    # sections absent locally (never overwrite an existing value, including an
-    # existing modelRoles.default), via the same yaml round-trip as stage 3c.
-    if [ -f "$OMP_CONFIG_DIR/config.yml" ] && [ -f "$CONFIG_YML" ]; then
-      if ! "$PY" - "$OMP_CONFIG_DIR/config.yml" "$CONFIG_YML" <<'PYEOF'
-import sys
-
-import yaml
-
-
-def merge_missing(src, dst):
-    """Copy keys into dst only where absent; dicts merge recursively."""
-    changed = False
-    for k, v in src.items():
-        if k not in dst or dst[k] is None:
-            dst[k] = v
-            changed = True
-        elif isinstance(v, dict) and isinstance(dst[k], dict):
-            changed = merge_missing(v, dst[k]) or changed
-    return changed
-
-
-repo_path, user_path = sys.argv[1], sys.argv[2]
-with open(repo_path, encoding="utf-8") as f:
-    repo = yaml.safe_load(f) or {}
-with open(user_path, encoding="utf-8") as f:
-    user = yaml.safe_load(f) or {}
-if merge_missing(repo, user):
-    with open(user_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(user, f, sort_keys=False, allow_unicode=True)
-PYEOF
-      then
-        echo "  config.yml: could not merge; local file left untouched." >&2
-      else
-        echo "  config.yml: merged keys absent locally (existing choices kept)."
-      fi
-    fi
-  fi
-fi
 
 # =====================================================================================
 # Summary
@@ -439,5 +302,4 @@ echo "     - Windows (elevated PowerShell): see the command printed by 'lumo-gat
 echo "       (gateway/install-supervisor.ps1 -Install), or check: lumo-gateway status"
 echo "     - Linux/macOS: systemd/launchd recipes in docs/GATEWAY.md"
 echo "  2. Start omp anywhere:  omp"
-echo "  3. (Optional) config sync re-run: this script; it is safe and incremental."
-echo "  4. If omp is not found: close and reopen the terminal (installer PATH note)."
+echo "  3. If omp is not found: close and reopen the terminal (installer PATH note)."

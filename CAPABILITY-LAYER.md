@@ -146,6 +146,5 @@ boundary.
   per bucket and flags DUE predictions that quietly never resolved. Scores honesty over
   time.
 
-The six skills live in `~/.claude/skills/local/` (claude-config repo, commits 533a6cd and
-bd5c8a8); schemas and data live in the `~/life/archive` repo (commits d4e8c91, 8ea4a2f,
-1b87e1c). Nothing is scheduled — pull-based by design.
+The six skills live in `~/.claude/skills/local/`; schemas and data live in the
+`~/life/archive` repo. Nothing is scheduled — pull-based by design.
