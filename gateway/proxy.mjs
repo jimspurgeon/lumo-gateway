@@ -50,7 +50,7 @@ const fatal = (kind, err) => {
 process.on("uncaughtException", (err) => fatal("uncaughtException", err));
 process.on("unhandledRejection", (reason) => fatal("unhandledRejection", reason));
 
-const credsRef = { current: readLumoCredentials() }; // mutable: upstream() refreshes it after a 401
+const credsRef = { current: readLumoCredentials({ log }) }; // mutable: upstream() refreshes it after a 401
 housekeep(); // at startup: rotate the log to a single .1 generation, cap the dumps
 log(`start port=${PORT} creds=${credsRef.current ? "ok" : "MISSING"} state=${STATE_DIR}`);
 

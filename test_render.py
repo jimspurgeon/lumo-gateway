@@ -251,7 +251,32 @@ class RehostedSessions(unittest.TestCase):
                      "Read(~/.var/app/*/.mozilla/**/cookies.sqlite)",
                      "Read(~/Library/Cookies/*.binarycookies)",
                      "Read(~/.librewolf/**/cookies.sqlite)",
-                     "Read(~/.config/**/Cookies)"):
+                     "Read(~/.config/**/Cookies)",
+                     # Every other store gateway/creds.mjs reads (#210): WAL side files, the
+                     # Chromium "Local State" key file, Snap/Flatpak Firefox and LibreWolf,
+                     # Waterfox, Zen and Floorp. Windows/macOS forks sit under the AppData and
+                     # Application Support globs above; Linux Chromium forks under ~/.config.
+                     "Read(//c/Users/*/AppData/**/cookies.sqlite-wal)",
+                     "Read(//c/Users/*/AppData/**/Cookies-wal)",
+                     "Read(//c/Users/*/AppData/**/Local State)",
+                     "Read(~/Library/Application Support/**/cookies.sqlite-wal)",
+                     "Read(~/Library/Application Support/**/Cookies-wal)",
+                     "Read(~/Library/Application Support/**/Local State)",
+                     "Read(~/.mozilla/**/cookies.sqlite-wal)",
+                     "Read(~/.var/app/*/.mozilla/**/cookies.sqlite-wal)",
+                     "Read(~/snap/*/common/.mozilla/**/cookies.sqlite)",
+                     "Read(~/snap/*/common/.mozilla/**/cookies.sqlite-wal)",
+                     "Read(~/.librewolf/**/cookies.sqlite-wal)",
+                     "Read(~/.var/app/*/.librewolf/**/cookies.sqlite)",
+                     "Read(~/.var/app/*/.librewolf/**/cookies.sqlite-wal)",
+                     "Read(~/.waterfox/**/cookies.sqlite)",
+                     "Read(~/.waterfox/**/cookies.sqlite-wal)",
+                     "Read(~/.zen/**/cookies.sqlite)",
+                     "Read(~/.zen/**/cookies.sqlite-wal)",
+                     "Read(~/.floorp/**/cookies.sqlite)",
+                     "Read(~/.floorp/**/cookies.sqlite-wal)",
+                     "Read(~/.config/**/Cookies-wal)",
+                     "Read(~/.config/**/Local State)"):
             self.assertIn(rule, deny)
 
     def test_api_key_helper_prints_the_key(self):

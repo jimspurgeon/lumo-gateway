@@ -350,7 +350,7 @@ function readChromium(entry, { log, keyFor }) {
   if (!rows) throw new Error("no cookies table");
   const metaVersion = Number(meta?.[0]?.value) || 0;
   if (!rows.length) return []; // no Lumo cookie: don't touch the key store at all
-  const label = `${entry.browser}${entry.profile && entry.profile !== "." ? ` (${entry.profile})` : ""}`;
+  const label = credLabel(entry);
   const key = keyFor(entry.dir, entry.browser);
   if (!key) { log(`creds: ${label}: Lumo cookie present but the browser key is unavailable; skipped`); return []; }
   const mtime = mtimeOf(entry.cookies);
@@ -416,13 +416,13 @@ export function readAllLumoCredentials(opts = {}) {
   for (const entry of firefoxDbs(seam ? (seam.firefox ?? []) : firefoxRoots())) {
     checked.add(entry.browser);
     try { browserRows.push(...readFirefox(entry)); }
-    catch { log(`creds: ${entry.browser} (${entry.profile}): cookie store unreadable; skipped`); }
+    catch { log(`creds: ${credLabel(entry)}: cookie store unreadable; skipped`); }
   }
   // 4. Chromium family (best effort; v20/app-bound is skipped and logged)
   for (const entry of chromiumDbs(seam ? (seam.chromium ?? []) : chromiumRoots())) {
     checked.add(entry.browser);
     try { browserRows.push(...readChromium(entry, { log, keyFor })); }
-    catch { log(`creds: ${entry.browser} (${entry.profile}): cookie store unreadable; skipped`); }
+    catch { log(`creds: ${credLabel(entry)}: cookie store unreadable; skipped`); }
   }
   browserRows.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0));
 
