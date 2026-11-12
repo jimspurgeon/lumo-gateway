@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { readLumoCredentials } from "./creds.mjs";
 
 // Builds a Firefox-style profile dir containing a cookies.sqlite with the given rows.
@@ -38,7 +38,7 @@ test("Firefox fixture profile yields uid, token and the cookies.sqlite source", 
   const { root, dbPath } = makeFirefoxProfile([GOOD, ...DISTRACTORS]);
   try {
     const creds = readLumoCredentials({ firefoxProfiles: [root] });
-    assert.deepEqual(creds, { uid: "12345", token: "tok123", source: dbPath });
+    assert.deepEqual(creds, { uid: "12345", token: "tok123", source: dbPath, browser: "Firefox", profile: basename(root) });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -199,13 +199,14 @@ test("undecryptable (app-bound v20) Chromium cookies are skipped and logged by b
   } finally { rmSync(chr, { recursive: true, force: true }); }
 });
 
-test("readLumoCredentials returns the first candidate as { uid, token, source }", () => {
+test("readLumoCredentials returns the first candidate with its browser label", () => {
   const ff = mkdtempSync(join(tmpdir(), "lumo-creds-ff-"));
   makeFirefoxProfileAt(ff, "old", [["AUTH-1", "stale", "lumo.proton.me", us(9000)]]);
   const fresh = makeFirefoxProfileAt(ff, "new", [["AUTH-2", "valid", "lumo.proton.me", us(1000)]]);
   try {
     const c = readLumoCredentials({ roots: { firefox: [[ff, "Firefox"]] } });
-    assert.deepEqual(Object.keys(c).sort(), ["source", "token", "uid"]);
+    assert.deepEqual(Object.keys(c).sort(), ["browser", "profile", "source", "token", "uid"]);
+    assert.equal(credLabel(c), "Firefox (old)"); // startup login is labelled, not "unknown source"
     assert.equal(c.token, "stale"); // most recently used wins the single-login API
     assert.equal(readAllLumoCredentials({ roots: { firefox: [[ff, "Firefox"]] } })[1].source, fresh);
   } finally { rmSync(ff, { recursive: true, force: true }); }

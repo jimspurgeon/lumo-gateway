@@ -436,14 +436,17 @@ export function readAllLumoCredentials(opts = {}) {
   return out;
 }
 
-// The single best login, as { uid, token, source }, or null. Short-circuits like the
+// The single best login, as { uid, token, source, browser?, profile? }, or null. Short-circuits like the
 // original reader: env or login.json are returned without opening any browser store;
 // only without them is the browser scan run (its most recently used login wins).
 // Same options as readAllLumoCredentials.
 export function readLumoCredentials(opts = {}) {
   const seamed = opts.roots || opts.firefoxProfiles;
   const first = (!seamed && explicitCredentials().find(isUsableLogin)) || readAllLumoCredentials(opts)[0];
-  return first ? { uid: first.uid, token: first.token, source: first.source } : null;
+  if (!first) return null;
+  const out = { uid: first.uid, token: first.token, source: first.source };
+  if (first.browser) { out.browser = first.browser; if (first.profile) out.profile = first.profile; } // for credLabel
+  return out;
 }
 
 // A short, token-free description of where a candidate came from, for logs and errors.
