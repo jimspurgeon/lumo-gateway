@@ -317,3 +317,69 @@ test("concurrent 401s share one candidate walk: cookie stores read once", async 
   assert.equal(reads, 2); // startup + the single shared walk
   assert.equal(credsRef.authPoll, undefined);
 });
+
+test("owner hits connection errors mid-walk: waiters are released and retry with the candidate", async () => {
+  let t2 = 0, reads = 0;
+  const calls = [];
+  const fn = async (url, opts) => {
+    const tok = opts.headers.authorization.slice(7);
+    calls.push(tok);
+    if (tok === TOKEN1) return res(401);
+    if (++t2 <= 3) throw new Error("socket hang up"); // owner's 3 attempts with TOKEN2 all fail
+    return res(200);
+  };
+  const credsRef = { current: null };
+  const readAllCreds = () => { reads++; return withList([cand(TOKEN1, "Firefox", "a"), cand(TOKEN2, "Chrome", "Default")]); };
+  const upstream = createUpstream({ fetchFn: fn, credsRef, readAllCreds, sleep: async () => {} });
+  const [r1, r2] = await Promise.all([upstream("/a", "GET", null, {}), upstream("/b", "GET", null, {})]);
+  assert.equal(r1.status, 502); // owner exhausted its connection retries
+  assert.equal(r2.status, 200); // waiter was released with TOKEN2 and succeeded
+  assert.equal(credsRef.authPoll, undefined);
+  assert.equal(reads, 2);
+  assert.equal(calls.at(-1), TOKEN2);
+});
+
+test("a request in flight with the old login when a walk finishes retries with the adopted one, no rescan", async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const calls = [];
+  const fn = async (url, opts) => {
+    const tok = opts.headers.authorization.slice(7);
+    calls.push([url.endsWith("/slow") ? "slow" : "fast", tok]);
+    if (tok !== TOKEN1) return res(200);
+    if (url.endsWith("/slow")) await gate;
+    return res(401);
+  };
+  let reads = 0;
+  const readAllCreds = () => { reads++; return withList([cand(TOKEN1, "Firefox", "a"), cand(TOKEN2, "Chrome", "Default")]); };
+  const credsRef = { current: null };
+  const upstream = createUpstream({ fetchFn: fn, credsRef, readAllCreds, sleep: async () => {} });
+  const slow = upstream("/slow", "GET", null, {});
+  assert.equal((await upstream("/fast", "GET", null, {})).status, 200); // walk done: TOKEN2 adopted
+  release();
+  assert.equal((await slow).status, 200);
+  assert.equal(reads, 2); // startup + the one walk; the late 401 did not rescan
+  assert.deepEqual(calls.filter(([w]) => w === "slow").map(([, t]) => t === TOKEN2), [false, true]);
+});
+
+test("adopting a login from a different account is logged by label only", async () => {
+  const logs = [];
+  const f = authFetch([TOKEN1]);
+  const upstream = createUpstream({
+    fetchFn: f.fn, credsRef: { current: null }, log: (m) => logs.push(m), sleep: async () => {},
+    readAllCreds: () => withList([cand(TOKEN1, "Firefox", "a"), cand(TOKEN2, "Chrome", "Default")]),
+  });
+  assert.equal((await upstream("/a", "GET", null, {})).status, 200);
+  const line = logs.find((l) => /different Lumo account/.test(l));
+  assert.ok(line, "uid change logged");
+  assert.match(line, /Chrome \(Default\)/);
+  for (const v of ["uid-Chrome", "uid-Firefox", TOKEN1, TOKEN2]) assert.ok(!line.includes(v), "no uid/token in log");
+  // Same account (same uid): no such line.
+  const logs2 = [];
+  const same = createUpstream({
+    fetchFn: authFetch([TOKEN1]).fn, credsRef: { current: null }, log: (m) => logs2.push(m), sleep: async () => {},
+    readAllCreds: () => withList([{ ...cand(TOKEN1, "Firefox", "a"), uid: "u" }, { ...cand(TOKEN2, "Chrome", "Default"), uid: "u" }]),
+  });
+  await same("/a", "GET", null, {});
+  assert.ok(!logs2.some((l) => /different Lumo account/.test(l)));
+});

@@ -67,17 +67,34 @@ test("a missing profile directory is skipped without throwing", () => {
   assert.equal(readLumoCredentials({ firefoxProfiles: [join(tmpdir(), "lumo-no-such-profile")] }), null);
 });
 
-test("without the seam, LUMO_TOKEN/LUMO_UID env vars take priority over everything", () => {
-  // Only exercises the env branch; never touches real browser profiles.
-  const saved = { LUMO_TOKEN: process.env.LUMO_TOKEN, LUMO_UID: process.env.LUMO_UID };
+// Runs fn with every browser location (HOME, USERPROFILE, APPDATA, LOCALAPPDATA,
+// XDG_CONFIG_HOME) pointed into a fresh temp dir, so unseamed calls can never open a real
+// browser store. Returns the temp dir's APPDATA so a test can plant fixture profiles.
+function withIsolatedHome(extraEnv, fn) {
+  const home = mkdtempSync(join(tmpdir(), "lumo-creds-home-"));
+  const iso = {
+    HOME: home, USERPROFILE: home, APPDATA: join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: join(home, "AppData", "Local"), XDG_CONFIG_HOME: join(home, ".config"),
+    CLAUDE_LUMO_STATE_DIR: join(home, ".claude-lumo"), LUMO_FIREFOX_PROFILE: undefined,
+    LUMO_TOKEN: undefined, LUMO_UID: undefined, ...extraEnv,
+  };
+  const saved = Object.fromEntries(Object.keys(iso).map((k) => [k, process.env[k]]));
+  const set = (vars) => { for (const [k, v] of Object.entries(vars)) if (v === undefined) delete process.env[k]; else process.env[k] = v; };
   try {
-    process.env.LUMO_TOKEN = "envtok";
-    process.env.LUMO_UID = "42";
-    assert.deepEqual(readLumoCredentials(), { uid: "42", token: "envtok", source: "env" });
-  } finally {
-    for (const [k, v] of Object.entries(saved))
-      if (v === undefined) delete process.env[k]; else process.env[k] = v;
-  }
+    mkdirSync(iso.APPDATA, { recursive: true });
+    mkdirSync(iso.CLAUDE_LUMO_STATE_DIR, { recursive: true });
+    set(iso);
+    return fn({ home, appData: iso.APPDATA, stateDir: iso.CLAUDE_LUMO_STATE_DIR });
+  } finally { set(saved); rmSync(home, { recursive: true, force: true }); }
+}
+
+test("without the seam, LUMO_TOKEN/LUMO_UID env vars take priority over everything", () => {
+  withIsolatedHome({ LUMO_TOKEN: "envtok", LUMO_UID: "42" }, () => {
+    const c = readLumoCredentials();
+    assert.equal(c?.source, "env");
+    assert.equal(c?.uid, "42");
+    assert.ok(c?.token === "envtok", "env token returned"); // assert.ok: never prints a token
+  });
 });
 
 // ---------- readAllLumoCredentials: every browser, every profile (#210) ----------
@@ -185,20 +202,32 @@ test("readLumoCredentials returns the first candidate as { uid, token, source }"
   } finally { rmSync(ff, { recursive: true, force: true }); }
 });
 
-test("env and login.json come first, before any browser cookie", () => {
-  const state = mkdtempSync(join(tmpdir(), "lumo-creds-state-"));
-  writeFileSync(join(state, "login.json"), JSON.stringify({ uid: "7", token: "manual" }));
-  const saved = { LUMO_TOKEN: process.env.LUMO_TOKEN, LUMO_UID: process.env.LUMO_UID, CLAUDE_LUMO_STATE_DIR: process.env.CLAUDE_LUMO_STATE_DIR };
-  try {
-    Object.assign(process.env, { LUMO_TOKEN: "envtok", LUMO_UID: "42", CLAUDE_LUMO_STATE_DIR: state });
-    const all = readAllLumoCredentials();
-    assert.deepEqual(all.slice(0, 2).map((c) => c.token), ["envtok", "manual"]);
-    assert.deepEqual(all.slice(0, 2).map(credLabel), ["env", "login.json"]);
-  } finally {
-    for (const [k, v] of Object.entries(saved))
-      if (v === undefined) delete process.env[k]; else process.env[k] = v;
-    rmSync(state, { recursive: true, force: true });
-  }
+test("env and login.json come first in the walk; the single pick never opens a browser store", () => {
+  withIsolatedHome({ LUMO_TOKEN: "envtok", LUMO_UID: "42" }, ({ appData, stateDir }) => {
+    writeFileSync(join(stateDir, "login.json"), JSON.stringify({ uid: "7", token: "manual" }));
+    const ffRoot = join(appData, "Mozilla", "Firefox", "Profiles");
+    makeFirefoxProfileAt(ffRoot, "good", [["AUTH-1", "browser-tok", "lumo.proton.me", us(9000)]]);
+    mkdirSync(join(ffRoot, "corrupt"));
+    writeFileSync(join(ffRoot, "corrupt", "cookies.sqlite"), "not a database");
+
+    const logs = [];
+    const all = readAllLumoCredentials({ log: (m) => logs.push(m) });
+    assert.deepEqual(all.map(credLabel), ["env", "login.json", "Firefox (good)"]);
+    assert.ok(logs.some((l) => /Firefox \(corrupt\).*unreadable/.test(l)), "the walk scans browser stores");
+
+    // Short-circuit: env wins without any browser store being opened (no log from the corrupt one).
+    const pickLogs = [];
+    assert.equal(readLumoCredentials({ log: (m) => pickLogs.push(m) })?.source, "env");
+    assert.deepEqual(pickLogs, []);
+    delete process.env.LUMO_TOKEN;
+    assert.equal(readLumoCredentials({ log: (m) => pickLogs.push(m) })?.source, join(stateDir, "login.json"));
+    assert.deepEqual(pickLogs, []);
+    // Without env and login.json the pick falls back to the browser scan.
+    rmSync(join(stateDir, "login.json"));
+    const c = readLumoCredentials({ log: (m) => pickLogs.push(m) });
+    assert.match(c?.source ?? "", /good/);
+    assert.ok(pickLogs.length > 0, "browser stores scanned only now");
+  });
 });
 
 // A Firefox profile named `name` inside an existing Profiles-style root; returns its cookies.sqlite.

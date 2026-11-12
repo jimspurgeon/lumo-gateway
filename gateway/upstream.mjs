@@ -3,7 +3,7 @@
 // a port, hitting the network, or touching the Firefox credential database:
 // every dependency (fetch, credentials, logging, sleep, timeouts) is injected
 // through createUpstream().
-import { credLabel, readAllLumoCredentials } from "./creds.mjs";
+import { credLabel, readAllLumoCredentials, readLumoCredentials } from "./creds.mjs";
 
 // Waits for the first byte of the upstream response before anything is
 // streamed to the client (default 240s, overridable via LUMO_FIRST_BYTE_MS).
@@ -32,6 +32,7 @@ export function createUpstream({
   firstByteMs = Number(process.env.LUMO_FIRST_BYTE_MS || DEFAULT_FIRST_BYTE_MS),
   upstreamBase = "https://lumo.proton.me/api/ai/v1",
 } = {}) {
+  const injectedAll = !!readAllCreds;
   // Callers that inject only readCreds (single login) get a one-element candidate list.
   if (!readAllCreds) readAllCreds = readCreds
     ? () => { const c = readCreds(); return c ? [c] : []; }
@@ -41,7 +42,8 @@ export function createUpstream({
       const once = (m) => { if (!said.has(m)) { said.add(m); log(m); } };
       return () => readAllLumoCredentials({ log: once });
     })();
-  if (!readCreds) readCreds = () => readAllCreds()[0] ?? null;
+  // Startup/lazy pick: env or login.json short-circuit; browsers are scanned only without them.
+  if (!readCreds) readCreds = injectedAll ? () => readAllCreds()[0] ?? null : () => readLumoCredentials();
   const bad = new Set(); // tokens Lumo has rejected with 401 in this process
   let lastChecked = []; // browser labels scanned by the latest candidate read
   let lastTried = 0; // candidates tried by the latest full recovery
@@ -77,7 +79,7 @@ export function createUpstream({
   return async function upstream(path, method, body, headers) {
     // walk: set while THIS request owns the 401 recovery (credsRef.authPoll is its
     // promise; concurrent 401s await it instead of reading the cookie stores again).
-    let walk = null, joined = false;
+    let walk = null, joined = false, followedCurrent = false;
     const finishWalk = (winner) => {
       if (!walk) return;
       walk.resolve(winner);
@@ -117,6 +119,12 @@ export function createUpstream({
           bad.add(creds.token);
           if (!walk) {
             if (joined) { await res.text().catch(() => {}); return rotationError(); }
+            const cur = credsRef.current;
+            if (!followedCurrent && cur && cur.token !== creds.token && !bad.has(cur.token)) {
+              // This request went out with an older login while another request's walk
+              // already adopted a new one: retry with that instead of rescanning.
+              followedCurrent = true; await res.text().catch(() => {}); continue;
+            }
             if (credsRef.authPoll) {
               // Another request is already walking the candidates: share its result.
               joined = true; await res.text().catch(() => {});
@@ -128,7 +136,7 @@ export function createUpstream({
             let resolve;
             const promise = new Promise((r) => { resolve = r; });
             credsRef.authPoll = promise;
-            walk = { promise, resolve, queue: null, tried: 0, polled: false, current: creds };
+            walk = { promise, resolve, queue: null, tried: 0, polled: false, current: creds, prevUid: creds.uid };
             await res.text().catch(() => {});
             walk.queue = freshCandidates();
             log(`401 from Lumo (${credLabel(creds)}); ${walk.queue.length} other candidate login(s) to try`);
@@ -155,6 +163,9 @@ export function createUpstream({
           // nothing against the login): adopt it and release any waiters.
           const winner = walk.current;
           if (winner !== credsRef.current) log(`401 recovered: using new token from ${credLabel(winner)} after ${walk.tried} candidate(s)`);
+          // Every browser's login is tried (user decision, #210), so the adopted one may
+          // belong to a different Lumo account; say so (label only, never uid or token).
+          if (winner.uid !== walk.prevUid) log(`401 recovered: the login from ${credLabel(winner)} is a different Lumo account than the previous one`);
           credsRef.current = winner;
           finishWalk(winner);
         }

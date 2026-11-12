@@ -350,6 +350,27 @@ function readChromium(entry, { log, keyFor }) {
 
 // ---------- entry points ----------
 
+// Explicit logins the user configured: LUMO_TOKEN/LUMO_UID, then login.json.
+// Reading them never touches a browser store.
+function explicitCredentials() {
+  const out = [];
+  // 1. Environment
+  if (process.env.LUMO_TOKEN && process.env.LUMO_UID)
+    out.push({ uid: process.env.LUMO_UID, token: process.env.LUMO_TOKEN, source: "env", browser: "env" });
+
+  // 2. Manual fallback: login.json in the Lumo state dir, CLAUDE_LUMO_STATE_DIR
+  // or the default ~/.claude-lumo (any browser, see README) (#96)
+  const stateDir = process.env.CLAUDE_LUMO_STATE_DIR
+    ? resolve(process.env.CLAUDE_LUMO_STATE_DIR)
+    : join(homedir(), ".claude-lumo");
+  const manual = join(stateDir, "login.json");
+  try {
+    const j = JSON.parse(readFileSync(manual, "utf8"));
+    if (j.uid && j.token) out.push({ uid: j.uid, token: j.token, source: manual, browser: "login.json" });
+  } catch {}
+  return out;
+}
+
 // Every candidate Lumo login, best first: env, then login.json (explicit choices), then
 // every browser AUTH-* cookie for lumo.proton.me sorted by last access (cookie timestamp,
 // else the cookie DB's mtime), de-duplicated by token (first occurrence wins). Each entry
@@ -364,24 +385,7 @@ export function readAllLumoCredentials(opts = {}) {
   const log = opts.log ?? (() => {});
   const keyFor = opts.keyFor ?? cachedAesKey;
   const seam = opts.roots ?? (opts.firefoxProfiles ? { firefox: opts.firefoxProfiles.map((d) => [d, "Firefox"]) } : null);
-  const explicit = [];
-
-  if (!seam) {
-    // 1. Environment
-    if (process.env.LUMO_TOKEN && process.env.LUMO_UID)
-      explicit.push({ uid: process.env.LUMO_UID, token: process.env.LUMO_TOKEN, source: "env", browser: "env" });
-
-    // 2. Manual fallback: login.json in the Lumo state dir, CLAUDE_LUMO_STATE_DIR
-    // or the default ~/.claude-lumo (any browser, see README) (#96)
-    const stateDir = process.env.CLAUDE_LUMO_STATE_DIR
-      ? resolve(process.env.CLAUDE_LUMO_STATE_DIR)
-      : join(homedir(), ".claude-lumo");
-    const manual = join(stateDir, "login.json");
-    try {
-      const j = JSON.parse(readFileSync(manual, "utf8"));
-      if (j.uid && j.token) explicit.push({ uid: j.uid, token: j.token, source: manual, browser: "login.json" });
-    } catch {}
-  }
+  const explicit = seam ? [] : explicitCredentials();
 
   const browserRows = [];
   const checked = new Set();
@@ -408,10 +412,13 @@ export function readAllLumoCredentials(opts = {}) {
   return out;
 }
 
-// The single best login (first candidate), as { uid, token, source }, or null.
+// The single best login, as { uid, token, source }, or null. Short-circuits like the
+// original reader: env or login.json are returned without opening any browser store;
+// only without them is the browser scan run (its most recently used login wins).
 // Same options as readAllLumoCredentials.
 export function readLumoCredentials(opts = {}) {
-  const first = readAllLumoCredentials(opts)[0];
+  const seamed = opts.roots || opts.firefoxProfiles;
+  const first = (!seamed && explicitCredentials()[0]) || readAllLumoCredentials(opts)[0];
   return first ? { uid: first.uid, token: first.token, source: first.source } : null;
 }
 

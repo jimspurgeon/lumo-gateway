@@ -153,8 +153,11 @@ of every Firefox-family browser (Firefox, Developer Edition, Nightly, LibreWolf,
 Waterfox, Zen, Floorp, Mullvad Browser, and other Mozilla-style `Profiles` folders) and
 every Chromium-family browser (Chrome and its Beta/Dev/Canary channels, Chromium, Edge
 channels, Brave, Vivaldi, Opera, Opera GX, Arc, Yandex, Thorium), most recently used
-first. When Lumo rejects a login (401), the proxy tries the next one, skipping logins
-already rejected, and keeps the first that works; only when all are rejected does it
+first. At startup `LUMO_TOKEN`/`LUMO_UID` or `login.json` is used as is, without
+opening any browser store; the browsers are scanned only when neither is set, or after
+a 401. When Lumo rejects a login (401), the proxy tries the next one, skipping logins
+already rejected since the proxy started, and keeps the first that works (it may
+belong to a different Lumo account; the proxy log says so, by browser name only); only when all are rejected does it
 wait up to 3 minutes for the browser to write a rotated cookie. Cookies it cannot
 decrypt (app-bound Chrome) are skipped and noted in the proxy log by browser name.
 The scan only reads copies of the cookie databases, and never logs a token.
