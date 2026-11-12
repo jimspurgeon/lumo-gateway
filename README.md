@@ -147,10 +147,17 @@ process running as your user can read it, and credential extraction from the bro
 is inherent to the keyless design — the tool trades secret storage for reading an
 existing login.
 
-If no login is found that way, the fallback credential scan walks every
-Chromium-family profile on the machine (Chrome, Edge, Brave, Vivaldi, Opera) looking
-for a Lumo login. The Firefox-first path is preferred; the scan only reads cookie
-databases.
+The proxy collects every Lumo login it can find, not just one: `LUMO_TOKEN`/`LUMO_UID`
+and `login.json` first, then every `AUTH-*` cookie for lumo.proton.me in every profile
+of every Firefox-family browser (Firefox, Developer Edition, Nightly, LibreWolf,
+Waterfox, Zen, Floorp, Mullvad Browser, and other Mozilla-style `Profiles` folders) and
+every Chromium-family browser (Chrome and its Beta/Dev/Canary channels, Chromium, Edge
+channels, Brave, Vivaldi, Opera, Opera GX, Arc, Yandex, Thorium), most recently used
+first. When Lumo rejects a login (401), the proxy tries the next one, skipping logins
+already rejected, and keeps the first that works; only when all are rejected does it
+wait up to 3 minutes for the browser to write a rotated cookie. Cookies it cannot
+decrypt (app-bound Chrome) are skipped and noted in the proxy log by browser name.
+The scan only reads copies of the cookie databases, and never logs a token.
 
 **Step 3: install claude-lumo.**
 
@@ -579,7 +586,7 @@ rm -f "$HOME/.local/bin/claude-lumo" "$HOME/.npm-global/bin/claude-lumo" 2>/dev/
 | `update` refuses: "not at a release tag" | Expected: the clone tracks `master` or an untagged commit. Re-run the installer to reset to a release. |
 | Update notice stuck on the status line | It clears on the next `claude-lumo update`; it also expires after 7 days. `CLAUDE_LUMO_UPDATE_CHECK=0` disables the check entirely. |
 | `ECONNREFUSED` mid-response | Proxy or LiteLLM crashed. Run any `claude-lumo` command again; it restarts both automatically. |
-| 401 from Lumo | Log in again at lumo.proton.me in your browser; the proxy picks up the fresh cookie by itself. |
+| 401 from Lumo | Log in again at lumo.proton.me in any browser (or reload its tab); the proxy tries every saved login and picks up the fresh cookie by itself. The error names the browsers it checked. |
 | "Slow thinking" or stuck at 5 min | Normal on lumo-max (~16 tok/s, minutes-long reasoning). Not a hang if requests keep finishing: `~/.claude-lumo/logs/proxy.log` logs each one, and `curl 127.0.0.1:8790/v1/debug/live` shows what is in flight. `LUMO_CAPTURE=1` on the proxy saves raw requests and streams to `~/.claude-lumo/debug/`. |
 | Proxy exits at startup (`mkdir` error in `EACCES`/`EPERM`) | Since #134 the proxy creates `<state>/logs` and `<state>/debug` at startup and exits if that fails, rather than running with logs silently going nowhere. Make `CLAUDE_LUMO_STATE_DIR` (default `~/.claude-lumo`) writable, or point the variable at a folder that is. |
 | "Invalid tool parameters" on parallel tool calls | Fixed in the proxy (it splits tool calls LiteLLM would merge). If it returns after a LiteLLM upgrade, check `splitToolCallChunks` in `gateway/proxy.mjs`. |
@@ -624,7 +631,7 @@ rm -f "$HOME/.local/bin/claude-lumo" "$HOME/.npm-global/bin/claude-lumo" 2>/dev/
 | `gateway/tool-guard.mjs` | Holds tool calls until the stream ends, then repairs or retries broken ones, else ends the turn with a visible message (#11). Tests: `node --test gateway/tool-guard.test.mjs` |
 | `gateway/websearch-guard.mjs` | Runs Claude Code's WebSearch delegation on Lumo's built-in web search, passing answers on only when a search ran and sources are cited (#59, #73). Tests: `node --test gateway/websearch-guard.test.mjs` |
 | `gateway/lumo_websearch.py` | LiteLLM callback adding the `server_tool_use` + `web_search_tool_result` blocks Claude Code counts for WebSearch (#111). Tests: `python -m pytest -q tests/test_lumo_websearch.py` |
-| `gateway/creds.mjs` | Reads Lumo login from any browser's cookies (Firefox, Chrome, Edge, Brave, Vivaldi, Opera) |
+| `gateway/creds.mjs` | Collects every Lumo login from every browser profile (Firefox and Chromium families), most recent first |
 | `gateway/litellm.yaml` | LiteLLM route table and callback registration |
 | `hooks/lumo-prompt.py` | SessionStart hook (startup, clear, compact; on resume and fork only when the transcript lacks the prompt): the only way the system prompt (LUMO.md plus the personal one) reaches a session, printed in parts under the hook output cap (#77) |
 | `hooks/busy-mark.py` | Per-session busy flag registry for the restart offer (set on prompt submit, cleared when the turn ends) |

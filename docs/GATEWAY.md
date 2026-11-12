@@ -84,7 +84,9 @@ answering on :4000 and :8790 it just uses them; otherwise it starts the gateway 
 the old way, so a machine without the services still works (see
 [How it works](../README.md#how-it-works)). When the services are present, the watchdog
 stops relaunching processes and only reports problems in its log. The watchdog has no
-401/cookie-expiry logic — that re-auth-and-retry path lives in `gateway/upstream.mjs` (#190).
+401/cookie-expiry logic — that re-auth-and-retry path lives in `gateway/upstream.mjs` (#190):
+on a 401 it walks every login found across browsers and profiles before waiting for a
+rotated cookie (#210).
 
 ## Plain Claude Code
 
