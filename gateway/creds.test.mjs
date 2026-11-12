@@ -99,7 +99,7 @@ test("without the seam, LUMO_TOKEN/LUMO_UID env vars take priority over everythi
 
 // ---------- readAllLumoCredentials: every browser, every profile (#210) ----------
 
-import { createCipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { readAllLumoCredentials, credLabel } from "./creds.mjs";
 
@@ -108,17 +108,22 @@ import { readAllLumoCredentials, credLabel } from "./creds.mjs";
 // real decrypt path runs with a key injected through keyFor.
 const KEY = randomBytes(process.platform === "win32" ? 32 : 16);
 function encryptV10(plain) {
+  return encryptV10Bytes(Buffer.from(plain, "utf8"));
+}
+// Meta version >= 24: Chromium prepends SHA256(host_key) to the plaintext before encrypting.
+const encryptV24 = (plain, host) => encryptV10Bytes(Buffer.concat([createHash("sha256").update(host).digest(), Buffer.from(plain, "utf8")]));
+function encryptV10Bytes(plain) {
   if (process.platform === "win32") {
     const nonce = randomBytes(12);
     const c = createCipheriv("aes-256-gcm", KEY, nonce);
-    const body = Buffer.concat([c.update(plain, "utf8"), c.final()]);
+    const body = Buffer.concat([c.update(plain), c.final()]);
     return Buffer.concat([Buffer.from("v10"), nonce, body, c.getAuthTag()]);
   }
   const c = createCipheriv("aes-128-cbc", KEY, Buffer.alloc(16, 0x20));
-  return Buffer.concat([Buffer.from("v10"), c.update(plain, "utf8"), c.final()]);
+  return Buffer.concat([Buffer.from("v10"), c.update(plain), c.final()]);
 }
 const chromiumTime = (msSince1970) => (msSince1970 + 11644473600000) * 1000; // µs since 1601
-function makeChromiumDir(profiles) {
+function makeChromiumDir(profiles, { metaVersion = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "lumo-creds-chr-"));
   writeFileSync(join(dir, "Local State"), "{}");
   for (const [profile, rows] of Object.entries(profiles)) {
@@ -126,6 +131,10 @@ function makeChromiumDir(profiles) {
     const con = new DatabaseSync(join(dir, profile, "Network", "Cookies"));
     try {
       con.exec("CREATE TABLE cookies (name TEXT, encrypted_value BLOB, host_key TEXT, last_access_utc INTEGER)");
+      if (metaVersion !== null) {
+        con.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)");
+        con.prepare("INSERT INTO meta VALUES ('version', ?)").run(String(metaVersion));
+      }
       const ins = con.prepare("INSERT INTO cookies VALUES (?, ?, ?, ?)");
       for (const [name, blob, host, ms] of rows) ins.run(name, blob, host, chromiumTime(ms));
     } finally { con.close(); }
@@ -228,6 +237,35 @@ test("env and login.json come first in the walk; the single pick never opens a b
     assert.match(c?.source ?? "", /good/);
     assert.ok(pickLogs.length > 0, "browser stores scanned only now");
   });
+});
+
+test("Chromium meta version >= 24: the SHA256(host) prefix is stripped from decrypted values", () => {
+  const chr = makeChromiumDir({ Default: [["AUTH-8", encryptV24("chr-v24", ".lumo.proton.me"), ".lumo.proton.me", 5000]] }, { metaVersion: 24 });
+  const old = makeChromiumDir({ Default: [["AUTH-9", encryptV10("chr-v23"), "lumo.proton.me", 4000]] }, { metaVersion: 23 });
+  const logs = [];
+  try {
+    const all = readAllLumoCredentials({ roots: { chromium: [[chr, "Chrome"], [old, "Edge"]] }, keyFor, log: (m) => logs.push(m) });
+    assert.equal(all.length, 2);
+    assert.ok(all[0].token === "chr-v24", "v24 value decoded without the host hash");
+    assert.ok(all[1].token === "chr-v23", "pre-24 value decoded unchanged");
+    assert.deepEqual(logs, []);
+  } finally { for (const d of [chr, old]) rmSync(d, { recursive: true, force: true }); }
+});
+
+test("a value that is not a valid header (hash prefix left in) is skipped and can never outrank a valid login", () => {
+  // meta v24 store whose row lacks the hash would decode wrong; simulate the old bug with
+  // a v24 row read as v23 (no meta table): the 32 hash bytes stay in and are not ASCII.
+  const chr = makeChromiumDir({ Default: [["AUTH-8", encryptV24("chr-v24", "lumo.proton.me"), "lumo.proton.me", 9000]] });
+  const ff = mkdtempSync(join(tmpdir(), "lumo-creds-ff-"));
+  makeFirefoxProfileAt(ff, "a", [["AUTH-1", "ff-valid", "lumo.proton.me", us(1000)]]);
+  const logs = [];
+  try {
+    const roots = { firefox: [[ff, "Firefox"]], chromium: [[chr, "Chrome"]] };
+    const all = readAllLumoCredentials({ roots, keyFor, log: (m) => logs.push(m) });
+    assert.deepEqual(all.map(credLabel), ["Firefox (a)"]);
+    assert.ok(logs.some((l) => /Chrome \(Default\).*not a valid header value/.test(l)));
+    assert.equal(readLumoCredentials({ roots, keyFor })?.source, join(ff, "a", "cookies.sqlite")); // startup pick
+  } finally { for (const d of [chr, ff]) rmSync(d, { recursive: true, force: true }); }
 });
 
 // A Firefox profile named `name` inside an existing Profiles-style root; returns its cookies.sqlite.

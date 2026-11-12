@@ -20,7 +20,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
-import { createDecipheriv, pbkdf2Sync } from "node:crypto";
+import { createDecipheriv, createHash, pbkdf2Sync } from "node:crypto";
 import { basename, join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { platform } from "node:process";
@@ -270,7 +270,9 @@ function macSafeStoragePassword(browser) {
   } catch { return null; }
 }
 
-export function decryptCookieValue(blob, key) {
+// `metaVersion`: the cookie DB's meta.version. From version 24 Chromium prepends
+// SHA256(host_key) (32 bytes) to the plaintext before encrypting; it is stripped here.
+export function decryptCookieValue(blob, key, { metaVersion = 0, hostKey = "" } = {}) {
   // Chromium cookie values: "v10"/"v11" prefix + payload.
   //   Windows (v10/v11): AES-256-GCM, 12-byte nonce after the prefix, 16-byte tag at the end.
   //   macOS/Linux (v10/v11): AES-128-CBC, IV is 16 space chars.
@@ -282,14 +284,29 @@ export function decryptCookieValue(blob, key) {
   if (platform === "win32") {
     const d = createDecipheriv("aes-256-gcm", key, data.subarray(0, 12));
     d.setAuthTag(data.subarray(data.length - 16));
-    return Buffer.concat([d.update(data.subarray(12, data.length - 16)), d.final()]).toString("utf8");
+    return stripHostHash(Buffer.concat([d.update(data.subarray(12, data.length - 16)), d.final()]), metaVersion, hostKey);
   }
   const d = createDecipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
-  return Buffer.concat([d.update(data), d.final()]).toString("utf8");
+  return stripHostHash(Buffer.concat([d.update(data), d.final()]), metaVersion, hostKey);
 }
+
+function stripHostHash(plain, metaVersion, hostKey) {
+  if (metaVersion < 24) return plain.toString("utf8");
+  const hash = createHash("sha256").update(hostKey).digest();
+  if (plain.length < 32 || !plain.subarray(0, 32).equals(hash)) throw new Error("host hash mismatch");
+  return plain.subarray(32).toString("utf8");
+}
+
+// A login can only be used if both values fit in an HTTP header: printable ASCII,
+// no spaces. Anything else (a mis-decrypted cookie) is rejected at collection time.
+const HEADER_SAFE = /^[!-~]+$/;
+export const isUsableLogin = (c) => !!c && typeof c.token === "string" && typeof c.uid === "string" &&
+  HEADER_SAFE.test(c.token) && HEADER_SAFE.test(c.uid);
 
 // ---------- readers ----------
 
+// `query` may be one SQL string (returns its rows) or an array (returns one row array
+// per query; a query that fails, e.g. a missing table, yields null).
 function readFromDb(cookiesPath, query, params = []) {
   // Copy the DB (and wal) so the browser's lock is never held, then query it.
   const dir = mkdtempSync(join(tmpdir(), "lumo-proxy-"));
@@ -297,7 +314,10 @@ function readFromDb(cookiesPath, query, params = []) {
     copyFileSync(cookiesPath, join(dir, "cookies.sqlite"));
     if (existsSync(cookiesPath + "-wal")) copyFileSync(cookiesPath + "-wal", join(dir, "cookies.sqlite-wal"));
     const con = new DatabaseSync(join(dir, "cookies.sqlite"));
-    try { return con.prepare(query).all(...params); } finally { con.close(); }
+    try {
+      if (!Array.isArray(query)) return con.prepare(query).all(...params);
+      return query.map((q) => { try { return con.prepare(q).all(); } catch { return null; } });
+    } finally { con.close(); }
   } finally { try { rmSync(dir, { recursive: true, force: true }); } catch {} }
 }
 
@@ -311,7 +331,8 @@ const FF_SELECT = "SELECT name, value, lastAccessed FROM moz_cookies " +
   "ORDER BY lastAccessed DESC";
 // last_access_utc (~1.3e16) exceeds 2^53, which node:sqlite refuses to return as a
 // Number, so it is divided down to milliseconds in SQL.
-const CHR_SELECT = "SELECT name, encrypted_value, last_access_utc / 1000 AS last_access_ms FROM cookies " +
+const CHR_META = "SELECT value FROM meta WHERE key = 'version'";
+const CHR_SELECT = "SELECT name, encrypted_value, host_key, last_access_utc / 1000 AS last_access_ms FROM cookies " +
   "WHERE host_key LIKE '%lumo.proton.me' AND name LIKE 'AUTH-%' " +
   "ORDER BY last_access_utc DESC";
 const CHROMIUM_EPOCH_OFFSET_MS = 11644473600000; // 1601-01-01 -> 1970-01-01
@@ -325,7 +346,9 @@ function readFirefox({ db, browser, profile }) {
 }
 
 function readChromium(entry, { log, keyFor }) {
-  const rows = readFromDb(entry.cookies, CHR_SELECT);
+  const [rows, meta] = readFromDb(entry.cookies, [CHR_SELECT, CHR_META]);
+  if (!rows) throw new Error("no cookies table");
+  const metaVersion = Number(meta?.[0]?.value) || 0;
   if (!rows.length) return []; // no Lumo cookie: don't touch the key store at all
   const label = `${entry.browser}${entry.profile && entry.profile !== "." ? ` (${entry.profile})` : ""}`;
   const key = keyFor(entry.dir, entry.browser);
@@ -336,7 +359,7 @@ function readChromium(entry, { log, keyFor }) {
   for (const r of rows) {
     if (!r.encrypted_value) continue;
     try {
-      const token = decryptCookieValue(Buffer.from(r.encrypted_value), key);
+      const token = decryptCookieValue(Buffer.from(r.encrypted_value), key, { metaVersion, hostKey: r.host_key ?? "" });
       if (!token) continue;
       out.push({
         uid: r.name.slice(5), token, source: entry.cookies, browser: entry.browser, profile: entry.profile,
@@ -405,6 +428,7 @@ export function readAllLumoCredentials(opts = {}) {
 
   const out = [], seen = new Set();
   for (const c of [...explicit, ...browserRows]) {
+    if (!isUsableLogin(c)) { log(`creds: ${credLabel(c)}: login value is not a valid header value; skipped`); continue; }
     if (seen.has(c.token)) continue;
     seen.add(c.token); out.push(c);
   }
@@ -418,7 +442,7 @@ export function readAllLumoCredentials(opts = {}) {
 // Same options as readAllLumoCredentials.
 export function readLumoCredentials(opts = {}) {
   const seamed = opts.roots || opts.firefoxProfiles;
-  const first = (!seamed && explicitCredentials()[0]) || readAllLumoCredentials(opts)[0];
+  const first = (!seamed && explicitCredentials().find(isUsableLogin)) || readAllLumoCredentials(opts)[0];
   return first ? { uid: first.uid, token: first.token, source: first.source } : null;
 }
 

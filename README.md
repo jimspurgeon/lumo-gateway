@@ -159,7 +159,8 @@ a 401. When Lumo rejects a login (401), the proxy tries the next one, skipping l
 already rejected since the proxy started, and keeps the first that works (it may
 belong to a different Lumo account; the proxy log says so, by browser name only); only when all are rejected does it
 wait up to 3 minutes for the browser to write a rotated cookie. Cookies it cannot
-decrypt (app-bound Chrome) are skipped and noted in the proxy log by browser name.
+decrypt (app-bound Chrome), and any value that is not a valid header, are skipped and
+noted in the proxy log by browser name; a skipped value is never sent or adopted.
 The scan only reads copies of the cookie databases, and never logs a token.
 
 **Step 3: install claude-lumo.**

@@ -3,7 +3,7 @@
 // a port, hitting the network, or touching the Firefox credential database:
 // every dependency (fetch, credentials, logging, sleep, timeouts) is injected
 // through createUpstream().
-import { credLabel, readAllLumoCredentials, readLumoCredentials } from "./creds.mjs";
+import { credLabel, isUsableLogin, readAllLumoCredentials, readLumoCredentials } from "./creds.mjs";
 
 // Waits for the first byte of the upstream response before anything is
 // streamed to the client (default 240s, overridable via LUMO_FIRST_BYTE_MS).
@@ -79,7 +79,7 @@ export function createUpstream({
   return async function upstream(path, method, body, headers) {
     // walk: set while THIS request owns the 401 recovery (credsRef.authPoll is its
     // promise; concurrent 401s await it instead of reading the cookie stores again).
-    let walk = null, joined = false, followedCurrent = false;
+    let walk = null, joined = false, followedCurrent = false, rejoins = 0;
     const finishWalk = (winner) => {
       if (!walk) return;
       walk.resolve(winner);
@@ -92,7 +92,13 @@ export function createUpstream({
         const creds = walk ? walk.current : credsRef.current;
         if (!creds) return jsonError(401, "lumo-proxy: no Lumo login found in any browser. Log in at lumo.proton.me in your browser.");
         let res;
-        try {
+        // A login already rejected, or one that cannot go in a header (a mis-decrypted
+        // cookie), is never sent: it is handled exactly like a 401 from Lumo.
+        const unusable = !isUsableLogin(creds);
+        if (unusable || bad.has(creds.token)) {
+          if (unusable) log(`login from ${credLabel(creds)} is not a valid header value; skipped`);
+          res = new Response(null, { status: 401 });
+        } else try {
           const ac = new AbortController();
           const timer = setTimeout(() => ac.abort(new Error(`no response from Lumo within ${firstByteMs / 1000}s`)), firstByteMs);
           try {
@@ -111,8 +117,13 @@ export function createUpstream({
             }
           } finally { clearTimeout(timer); }
         } catch (e) {
-          if (attempt < 2) { attempt++; log(`${e.name === 'AbortError' || /no response/.test(String(e.message)) ? 'no first byte' : 'connection error'}, retry ${attempt}: ${e.message}`); await sleep(1500 * attempt); continue; }
-          return jsonError(502, `lumo-proxy: connection error: ${e.message}`);
+          if (e instanceof TypeError && /ByteString|header/i.test(String(e.message))) {
+            // Not a network failure: fetch refused the login itself. Reject it like a 401.
+            // (e.message is not logged: undici can quote the offending header value.)
+            log(`login from ${credLabel(creds)} could not be sent as a header; skipped`);
+            res = new Response(null, { status: 401 });
+          } else if (attempt < 2) { attempt++; log(`${e.name === 'AbortError' || /no response/.test(String(e.message)) ? 'no first byte' : 'connection error'}, retry ${attempt}: ${e.message}`); await sleep(1500 * attempt); continue; }
+          else return jsonError(502, `lumo-proxy: connection error: ${e.message}`);
         }
 
         if (res.status === 401) {
@@ -129,6 +140,11 @@ export function createUpstream({
               // Another request is already walking the candidates: share its result.
               joined = true; await res.text().catch(() => {});
               const winner = await credsRef.authPoll;
+              if (winner === undefined && rejoins++ < 1) {
+                // The owner stopped on a connection error without settling on a login:
+                // nothing was adopted, so recover on our own (once).
+                joined = false; continue;
+              }
               if (!winner || bad.has(winner.token)) return rotationError();
               credsRef.current = winner; continue;
             }
@@ -179,9 +195,10 @@ export function createUpstream({
         return res;
       }
     } finally {
-      // Any exit while still owning the walk (connection errors etc.): release waiters
-      // with the candidate in hand unless Lumo rejected it, so they never hang.
-      finishWalk(walk && !bad.has(walk.current.token) ? walk.current : credsRef.current);
+      // Any exit while still owning the walk (connection errors): release waiters with
+      // "no result" so they never hang. An untested candidate is never handed out and
+      // never written to credsRef.current.
+      finishWalk(undefined);
     }
   };
 }

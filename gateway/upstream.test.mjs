@@ -262,8 +262,8 @@ test("once every candidate is known bad, later requests do not retry them", asyn
     assert.deepEqual(g.calls, [TOKEN1, TOKEN2, TOKEN3]);
     const r2 = await up("/a", "GET", null, {});
     assert.equal(r2.status, 401);
-    // Second request: current login (TOKEN1) is sent once, then no known-bad candidate again.
-    assert.deepEqual(g.calls.slice(3), [TOKEN1]);
+    // Second request: every login is known bad, so nothing is sent to Lumo at all.
+    assert.equal(g.calls.length, 3);
     const body = await r2.text();
     assert.match(body, /checked: Firefox, Chrome/);
   } finally { if (saved === undefined) delete process.env.LUMO_AUTH_REFRESH_WAIT_MS; else process.env.LUMO_AUTH_REFRESH_WAIT_MS = saved; }
@@ -318,12 +318,12 @@ test("concurrent 401s share one candidate walk: cookie stores read once", async 
   assert.equal(credsRef.authPoll, undefined);
 });
 
-test("owner hits connection errors mid-walk: waiters are released and retry with the candidate", async () => {
+test("owner hits connection errors mid-walk: no untested login is adopted; waiter recovers on its own", async () => {
   let t2 = 0, reads = 0;
   const calls = [];
   const fn = async (url, opts) => {
     const tok = opts.headers.authorization.slice(7);
-    calls.push(tok);
+    calls.push(tok === TOKEN1 ? "T1" : "T2");
     if (tok === TOKEN1) return res(401);
     if (++t2 <= 3) throw new Error("socket hang up"); // owner's 3 attempts with TOKEN2 all fail
     return res(200);
@@ -331,12 +331,57 @@ test("owner hits connection errors mid-walk: waiters are released and retry with
   const credsRef = { current: null };
   const readAllCreds = () => { reads++; return withList([cand(TOKEN1, "Firefox", "a"), cand(TOKEN2, "Chrome", "Default")]); };
   const upstream = createUpstream({ fetchFn: fn, credsRef, readAllCreds, sleep: async () => {} });
-  const [r1, r2] = await Promise.all([upstream("/a", "GET", null, {}), upstream("/b", "GET", null, {})]);
-  assert.equal(r1.status, 502); // owner exhausted its connection retries
-  assert.equal(r2.status, 200); // waiter was released with TOKEN2 and succeeded
+  const p1 = upstream("/a", "GET", null, {});
+  const p2 = upstream("/b", "GET", null, {});
+  const r1 = await p1;
+  assert.equal(r1.status, 502); // genuine network errors still abort the owner
+  assert.ok(credsRef.current.token === TOKEN1, "the untested candidate was not written to credsRef.current");
+  const r2 = await p2;
+  assert.equal(r2.status, 200); // the waiter walked again itself and TOKEN2 then answered
   assert.equal(credsRef.authPoll, undefined);
-  assert.equal(reads, 2);
-  assert.equal(calls.at(-1), TOKEN2);
+  assert.ok(credsRef.current.token === TOKEN2, "adopted only after Lumo accepted it");
+  assert.equal(reads, 3); // startup + owner's walk + the waiter's own walk
+  // TOKEN1 is known bad, so the waiter never sent it again.
+  assert.deepEqual(calls, ["T1", "T1", "T2", "T2", "T2", "T2"]);
+});
+
+test("regression: an unsendable (mis-decrypted) candidate is skipped and never adopted", async () => {
+  // From the gate repro: a v24 hash-prefixed Chromium value decodes to U+FFFD garbage.
+  const garbage = "��xyz";
+  const list = withList([{ uid: "1", token: garbage, browser: "Edge", profile: "Default" }, { uid: "1", token: "GOOD", browser: "Firefox", profile: "a" }]);
+  const seen = [];
+  const logs = [];
+  const fetchFn = async (url, init) => {
+    const t = new Headers(init.headers).get("authorization").slice(7); // real header validation
+    seen.push(t === "GOOD" ? "GOOD" : t === "STALE" ? "STALE" : "garbage");
+    return new Response(t === "GOOD" ? "ok" : "no", { status: t === "GOOD" ? 200 : 401 });
+  };
+  const credsRef = { current: { uid: "1", token: "STALE" } };
+  const up = createUpstream({ fetchFn, credsRef, readAllCreds: () => list, log: (m) => logs.push(m), sleep: async () => {} });
+  const [a, b] = await Promise.all([up("/x", "POST", "{}", {}), up("/x", "POST", "{}", {})]);
+  const c = await up("/x", "POST", "{}", {});
+  assert.deepEqual([a.status, b.status, c.status], [200, 200, 200]);
+  assert.ok(credsRef.current.token === "GOOD", "the valid login was adopted");
+  assert.ok(!seen.includes("garbage"), "garbage never reached fetch");
+  assert.ok(logs.some((l) => /Edge \(Default\).*not a valid header value/.test(l)));
+  for (const l of logs) assert.ok(!l.includes(garbage) && !l.includes("GOOD"), "no token in logs");
+});
+
+test("a thrown header error from fetch marks that login bad and moves on (not a 502)", async () => {
+  const calls = [];
+  const fetchFn = async (url, init) => {
+    const t = init.headers.authorization.slice(7);
+    calls.push(t === TOKEN2 ? "T2" : t === TOKEN3 ? "T3" : "T1");
+    if (t === TOKEN1) return res(401);
+    if (t === TOKEN2) throw new TypeError("Cannot convert argument to a ByteString");
+    return res(200);
+  };
+  const credsRef = { current: null };
+  const up = createUpstream({ fetchFn, credsRef, sleep: async () => {},
+    readAllCreds: () => withList([cand(TOKEN1, "Firefox", "a"), cand(TOKEN2, "Edge", "Default"), cand(TOKEN3, "Chrome", "Default")]) });
+  assert.equal((await up("/x", "GET", null, {})).status, 200);
+  assert.deepEqual(calls, ["T1", "T2", "T3"]); // no connection-error retries of T2
+  assert.ok(credsRef.current.token === TOKEN3);
 });
 
 test("a request in flight with the old login when a walk finishes retries with the adopted one, no rescan", async () => {
