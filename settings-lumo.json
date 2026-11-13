@@ -142,7 +142,28 @@
       "Read(~/.var/app/*/.mozilla/**/cookies.sqlite)",
       "Read(~/Library/Cookies/*.binarycookies)",
       "Read(~/.librewolf/**/cookies.sqlite)",
-      "Read(~/.config/**/Cookies)"
+      "Read(~/.config/**/Cookies)",
+      "Read(//c/Users/*/AppData/**/cookies.sqlite-wal)",
+      "Read(//c/Users/*/AppData/**/Cookies-wal)",
+      "Read(//c/Users/*/AppData/**/Local State)",
+      "Read(~/Library/Application Support/**/cookies.sqlite-wal)",
+      "Read(~/Library/Application Support/**/Cookies-wal)",
+      "Read(~/Library/Application Support/**/Local State)",
+      "Read(~/.mozilla/**/cookies.sqlite-wal)",
+      "Read(~/.var/app/*/.mozilla/**/cookies.sqlite-wal)",
+      "Read(~/snap/*/common/.mozilla/**/cookies.sqlite)",
+      "Read(~/snap/*/common/.mozilla/**/cookies.sqlite-wal)",
+      "Read(~/.librewolf/**/cookies.sqlite-wal)",
+      "Read(~/.var/app/*/.librewolf/**/cookies.sqlite)",
+      "Read(~/.var/app/*/.librewolf/**/cookies.sqlite-wal)",
+      "Read(~/.waterfox/**/cookies.sqlite)",
+      "Read(~/.waterfox/**/cookies.sqlite-wal)",
+      "Read(~/.zen/**/cookies.sqlite)",
+      "Read(~/.zen/**/cookies.sqlite-wal)",
+      "Read(~/.floorp/**/cookies.sqlite)",
+      "Read(~/.floorp/**/cookies.sqlite-wal)",
+      "Read(~/.config/**/Cookies-wal)",
+      "Read(~/.config/**/Local State)"
     ]
   }
 }
