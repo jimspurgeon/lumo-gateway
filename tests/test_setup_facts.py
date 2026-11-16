@@ -87,8 +87,8 @@ def test_parse_models_from_repo_yaml(scratch):
     """The shipped litellm.yaml parses to lumo-lite + lumo-max with limits."""
     r = call(scratch, f'facts_parse_models "{ROOT_B}/gateway/litellm.yaml"')
     assert r.returncode == 0, err_text(r)
-    assert "lumo-lite|131072|32768" in text(r)
-    assert "lumo-max|131072|32768" in text(r)
+    assert "lumo-lite|262144|32768" in text(r)
+    assert "lumo-max|262144|32768" in text(r)
     lines = [l for l in text(r).splitlines() if l]
     assert len(lines) == 2, text(r)  # "*haiku*" and "*" are routes, not models
 
@@ -108,8 +108,8 @@ def test_parse_models_reflects_runtime_yaml(scratch, tmp_path):
 def test_render_models_lines(scratch):
     r = call(scratch, f'facts_render_models "{ROOT_B}/gateway/litellm.yaml"')
     assert r.returncode == 0, err_text(r)
-    assert "lumo-max — context 131072 tokens, replies up to 32768 tokens" in text(r)
-    assert "lumo-lite — context 131072 tokens, replies up to 32768 tokens" in text(r)
+    assert "lumo-max — context 262144 tokens, replies up to 32768 tokens" in text(r)
+    assert "lumo-lite — context 262144 tokens, replies up to 32768 tokens" in text(r)
 
 
 def test_fact_sheet_order_and_content(scratch):
@@ -122,7 +122,7 @@ def test_fact_sheet_order_and_content(scratch):
              ("Base URL:", "Protocols:", "Models:", "Master key:", "Services:")]
     assert order == sorted(order), out
     assert "http://127.0.0.1:4000" in out
-    assert "lumo-max — context 131072 tokens" in out   # derived, not hardcoded
+    assert "lumo-max — context 262144 tokens" in out   # derived, not hardcoded
     assert "/v1/chat/completions" in out and "/v1/messages" in out
     assert bash_view(scratch["key"]) in out            # key PATH is printed
     assert "Wiring it up:" in out                      # generic instructions

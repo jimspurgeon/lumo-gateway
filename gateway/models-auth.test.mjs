@@ -9,7 +9,7 @@
 //   1. keyless GET /models answers 401, not 500,
 //   2. a wrong key answers 401,
 //   3. the master key answers 200 and /v1/models reports the per-model limits
-//      from model_info (131072 in / 32768 out) for lumo-max and lumo-lite,
+//      from model_info (262144 in / 32768 out) for lumo-max and lumo-lite,
 //   4. valid-key /v1/messages traffic is unchanged (the hook must not disturb
 //      the path every client actually uses),
 //   5. /health/liveliness stays keyless (watchdog and boot polls depend on it).
@@ -76,7 +76,7 @@ async function boot() {
       api_base: http://127.0.0.1:${MOCK_PORT}/v1
       api_key: mock-upstream-key
     model_info:
-      max_input_tokens: 131072
+      max_input_tokens: 262144
       max_output_tokens: 32768
   - model_name: lumo-max
     litellm_params:
@@ -84,7 +84,7 @@ async function boot() {
       api_base: http://127.0.0.1:${MOCK_PORT}/v1
       api_key: mock-upstream-key
     model_info:
-      max_input_tokens: 131072
+      max_input_tokens: 262144
       max_output_tokens: 32768
 litellm_settings:
   drop_params: true
@@ -201,7 +201,7 @@ suite("master key lists models with their token limits", async () => {
     // (create_model_info_response); model_info nested inside the entry is
     // tolerated so the test survives a shape tweak on upgrade.
     const info = entry.model_info ?? entry;
-    assert.equal(info.max_input_tokens, 131072, `${name} max_input_tokens: ${JSON.stringify(entry)}`);
+    assert.equal(info.max_input_tokens, 262144, `${name} max_input_tokens: ${JSON.stringify(entry)}`);
     assert.equal(info.max_output_tokens, 32768, `${name} max_output_tokens: ${JSON.stringify(entry)}`);
   }
 });

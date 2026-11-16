@@ -23,7 +23,7 @@ The status line always shows which one you are on: `[CLAUDE] Opus 5.5` or `[LUMO
 - **Stream repair.** Dropped or malformed tool calls are held, validated, repaired or
   retried. Multi-tool-call chunks that LiteLLM would merge are split. Failed Edits get
   the closest real text appended so the retry can copy it. Long prompts are fitted into
-  Lumo's 131072-token window by cutting `max_tokens` instead of failing.
+  Lumo's 262144-token window by cutting `max_tokens` instead of failing.
 - **Update lifecycle.** `claude-lumo update` and `claude-lumo revert` switch between
   release tags, with guards against losing local changes. Each launch runs a silent
   daily check for a newer release, and the status line repeats it about hourly for
@@ -630,7 +630,7 @@ rm -f "$HOME/.local/bin/claude-lumo" "$HOME/.npm-global/bin/claude-lumo" 2>/dev/
 | `privacy_audit.py` | Data safety posture audit (see above) |
 | `gateway/proxy.mjs` | Lumo proxy: cookie auth, retries, stream repair (split multi-tool-call chunks), per-request stats in `<state>/logs/proxy.log`, `/v1/debug/live` |
 | `gateway/sniffer.mjs` | Buffer non-SSE chat responses; extract error type/code; retry `no_db_connection`. Tests: `node --test gateway/sniffer.test.mjs` |
-| `gateway/context-fit.mjs` | Keeps prompt + reply inside Lumo's 131072-token window: learns each session's bytes-per-token ratio and cuts `max_tokens` (#65). Tests: `node --test gateway/context-fit.test.mjs` |
+| `gateway/context-fit.mjs` | Keeps prompt + reply inside Lumo's 262144-token window: learns each session's bytes-per-token ratio and cuts `max_tokens` (#65). Tests: `node --test gateway/context-fit.test.mjs` |
 | `gateway/edit-hints.mjs` | Adds the closest real text to a failed Edit (and a reminder to Read before Edit or Write). Claude Code checks edits before any hook runs, so this has to live in the proxy |
 | `gateway/tool-guard.mjs` | Holds tool calls until the stream ends, then repairs or retries broken ones, else ends the turn with a visible message (#11). Tests: `node --test gateway/tool-guard.test.mjs` |
 | `gateway/websearch-guard.mjs` | Runs Claude Code's WebSearch delegation on Lumo's built-in web search, passing answers on only when a search ran and sources are cited (#59, #73). Tests: `node --test gateway/websearch-guard.test.mjs` |

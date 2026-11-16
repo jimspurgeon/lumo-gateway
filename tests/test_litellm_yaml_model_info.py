@@ -27,7 +27,7 @@ AUTH_PATH = os.path.join(ROOT, "gateway", "lumo_models_auth.py")
 
 # The Lumo context window: 131k tokens shared by prompt and reply, replies up
 # to 32k (same on both hosted tiers; see docs/GATEWAY.md).
-MAX_INPUT_TOKENS = 131072
+MAX_INPUT_TOKENS = 262144
 MAX_OUTPUT_TOKENS = 32768
 MODELS_WITH_INFO = ("lumo-max", "lumo-lite")
 

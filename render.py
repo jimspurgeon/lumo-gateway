@@ -193,7 +193,7 @@ def write(path, text):
 
 def context_tokens(lumo):
     """The proxy's token window (CONTEXT_TOKENS in gateway/context-fit.mjs), the one value Claude
-    Code's compaction window must stay below. Falls back to 131072 with a warning when the file
+    Code's compaction window must stay below. Falls back to 262144 with a warning when the file
     or the constant cannot be found (renamed or restructured without this renderer catching up)."""
     path = os.path.join(lumo, "gateway", "context-fit.mjs")
     try:
@@ -202,9 +202,9 @@ def context_tokens(lumo):
     except OSError:
         m = None
     if not m:
-        print(f"claude-lumo: {path} has no CONTEXT_TOKENS constant; falling back to 131072 for the "
+        print(f"claude-lumo: {path} has no CONTEXT_TOKENS constant; falling back to 262144 for the "
               f"compaction window", file=sys.stderr)
-        return 131072
+        return 262144
     return int(m.group(1))
 
 

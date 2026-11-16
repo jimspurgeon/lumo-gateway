@@ -216,7 +216,7 @@ class RehostedSessions(unittest.TestCase):
         context = render.context_tokens(HERE)
         self.assertLessEqual(s["autoCompactWindow"], context - render.COMPACT_MARGIN)
         self.assertGreaterEqual(context - s["autoCompactWindow"], 12000)
-        self.assertLessEqual(s["autoCompactWindow"], 119072)
+        self.assertLessEqual(s["autoCompactWindow"], 250144)
 
     def test_settings_template_has_no_duplicate_keys(self):
         # json.load keeps only the last of two equal keys, which once dropped a SessionStart hook.

@@ -570,7 +570,7 @@ def write_settings(state_dir: str, window) -> None:
 
 
 def usage_payload(tokens: int, used_pct=None) -> dict:
-    cw = {"context_window_size": 131072,
+    cw = {"context_window_size": 262144,
           "current_usage": {"input_tokens": 1000, "cache_creation_input_tokens": 0,
                             "cache_read_input_tokens": tokens - 1000, "output_tokens": 500}}
     if used_pct is not None:

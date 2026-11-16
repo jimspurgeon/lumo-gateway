@@ -350,7 +350,7 @@ Any client that speaks either protocol works. It needs exactly three facts:
 
 A client with model discovery can skip fact 3 entirely: `GET /v1/models` on the
 base URL lists the IDs, so a picker that reads it shows them automatically. It
-also reports each hosted model's context limits (`max_input_tokens` 131072,
+also reports each hosted model's context limits (`max_input_tokens` 262144,
 `max_output_tokens` 32768). The key is required: a request without it (or with a
 wrong one) gets a 401, so enter the key before probing for models.
 

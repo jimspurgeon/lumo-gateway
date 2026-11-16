@@ -1,8 +1,9 @@
-// Keeps prompt + reply inside Lumo's 131072-token window (issue #65).
+// Keeps prompt + reply inside Lumo's 262144-token window (issue #65; doubled 2026-11-16
+// when Lumo raised the model context from 128K to 256K).
 //
-// Lumo counts the prompt AND the requested reply (max_tokens) against one 131072-token window,
-// and Claude Code asks for max_tokens 32000, so a prompt over about 99K tokens used to fail with
-// HTTP 400 "This model's maximum context length is 131072 tokens. However, you requested 32000
+// Lumo counts the prompt AND the requested reply (max_tokens) against one 262144-token window,
+// and Claude Code asks for max_tokens 32000, so a prompt over about 229K tokens used to fail with
+// HTTP 400 "This model's maximum context length is 262144 tokens. However, you requested 32000
 // output tokens and your prompt contains at least N input tokens". N is only a lower bound (Lumo
 // stops counting at the limit), so the error alone cannot say how much room is left.
 //
@@ -13,8 +14,7 @@
 // max_tokens is cut when prompt + reply would not fit. Measured 2026-10-13 across 2297 requests:
 // median 4.2 bytes/token, 5th percentile 3.65; unknown sessions use the conservative 3.65, which
 // overestimates the prompt and so errs towards a smaller reply rather than a failed request.
-
-export const CONTEXT_TOKENS = 131072;
+export const CONTEXT_TOKENS = 262144;
 export const DEFAULT_BYTES_PER_TOKEN = 3.65;
 export const MIN_OUTPUT_TOKENS = 1024; // below this a reply is not worth asking for
 const SAFETY = 1.03; // estimate slack on top of the learned ratio
